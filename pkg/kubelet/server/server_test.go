@@ -19,6 +19,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -127,6 +128,24 @@ func (fk *fakeKubelet) ServeLogs(w http.ResponseWriter, req *http.Request) {
 
 func (fk *fakeKubelet) GetKubeletContainerLogs(ctx context.Context, podFullName, containerName string, logOptions *v1.PodLogOptions, stdout, stderr io.Writer) error {
 	return fk.containerLogsFunc(ctx, podFullName, containerName, logOptions, stdout, stderr)
+}
+
+func (fk *fakeKubelet) GetContainerLogPaths(_ context.Context, podNamespace, podName string) (map[string]string, error) {
+	pod, ok := fk.podByNameFunc(podNamespace, podName)
+	if !ok {
+		return nil, fmt.Errorf("pod %q not found", podName)
+	}
+	result := make(map[string]string)
+	for _, c := range pod.Spec.InitContainers {
+		result[c.Name] = fmt.Sprintf("/var/log/pods/%s_%s_%s/%s", podNamespace, podName, pod.UID, c.Name)
+	}
+	for _, c := range pod.Spec.Containers {
+		result[c.Name] = fmt.Sprintf("/var/log/pods/%s_%s_%s/%s", podNamespace, podName, pod.UID, c.Name)
+	}
+	for _, c := range pod.Spec.EphemeralContainers {
+		result[c.Name] = fmt.Sprintf("/var/log/pods/%s_%s_%s/%s", podNamespace, podName, pod.UID, c.Name)
+	}
+	return result, nil
 }
 
 func (fk *fakeKubelet) GetHostname() string {
@@ -1091,6 +1110,111 @@ func TestContainerLogsWithSeparateStream(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestContainerLogPaths(t *testing.T) {
+	fw := newServerTest()
+	defer fw.testHTTPServer.Close()
+
+	podNamespace := "other"
+	podName := "foo"
+	podUID := types.UID("test-uid-123")
+
+	fw.fakeKubelet.podByNameFunc = func(namespace, name string) (*v1.Pod, bool) {
+		if namespace == podNamespace && name == podName {
+			return &v1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: podNamespace,
+					Name:      podName,
+					UID:       podUID,
+				},
+				Spec: v1.PodSpec{
+					InitContainers: []v1.Container{
+						{Name: "init-container"},
+					},
+					Containers: []v1.Container{
+						{Name: "main-app"},
+						{Name: "sidecar"},
+					},
+					EphemeralContainers: []v1.EphemeralContainer{
+						{EphemeralContainerCommon: v1.EphemeralContainerCommon{Name: "debug"}},
+					},
+				},
+			}, true
+		}
+		return nil, false
+	}
+
+	resp, err := http.Get(fw.testHTTPServer.URL + "/containerLogPaths/" + podNamespace + "/" + podName)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	var result map[string]string
+	err = json.Unmarshal(body, &result)
+	require.NoError(t, err)
+
+	expected := map[string]string{
+		"init-container": fmt.Sprintf("/var/log/pods/%s_%s_%s/init-container", podNamespace, podName, podUID),
+		"main-app":       fmt.Sprintf("/var/log/pods/%s_%s_%s/main-app", podNamespace, podName, podUID),
+		"sidecar":        fmt.Sprintf("/var/log/pods/%s_%s_%s/sidecar", podNamespace, podName, podUID),
+		"debug":          fmt.Sprintf("/var/log/pods/%s_%s_%s/debug", podNamespace, podName, podUID),
+	}
+	assert.Equal(t, expected, result)
+}
+
+func TestContainerLogPathsPodNotFound(t *testing.T) {
+	fw := newServerTest()
+	defer fw.testHTTPServer.Close()
+
+	fw.fakeKubelet.podByNameFunc = func(namespace, name string) (*v1.Pod, bool) {
+		return nil, false
+	}
+
+	resp, err := http.Get(fw.testHTTPServer.URL + "/containerLogPaths/default/nonexistent")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestContainerLogPathsNoContainers(t *testing.T) {
+	fw := newServerTest()
+	defer fw.testHTTPServer.Close()
+
+	podNamespace := "default"
+	podName := "empty-pod"
+	podUID := types.UID("empty-uid")
+
+	fw.fakeKubelet.podByNameFunc = func(namespace, name string) (*v1.Pod, bool) {
+		return &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: podNamespace,
+				Name:      podName,
+				UID:       podUID,
+			},
+			Spec: v1.PodSpec{},
+		}, true
+	}
+
+	resp, err := http.Get(fw.testHTTPServer.URL + "/containerLogPaths/" + podNamespace + "/" + podName)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	var result map[string]string
+	err = json.Unmarshal(body, &result)
+	require.NoError(t, err)
+
+	assert.Empty(t, result)
 }
 
 func TestCheckpointContainer(t *testing.T) {
