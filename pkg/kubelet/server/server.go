@@ -268,6 +268,7 @@ type HostInterface interface {
 	RunInContainer(ctx context.Context, name string, uid types.UID, container string, cmd []string) ([]byte, error)
 	CheckpointContainer(ctx context.Context, podUID types.UID, podFullName, containerName string, options *runtimeapi.CheckpointContainerRequest) error
 	GetKubeletContainerLogs(ctx context.Context, podFullName, containerName string, logOptions *v1.PodLogOptions, stdout, stderr io.Writer) error
+	GetContainerLogPaths(ctx context.Context, podNamespace, podName string) (map[string]string, error)
 	ServeLogs(w http.ResponseWriter, req *http.Request)
 	GetHostname() string
 	SyncLoopHealthCheck(req *http.Request) error
@@ -553,6 +554,16 @@ func (s *Server) InstallDebuggingHandlers() {
 		Operation("getContainerLogs"))
 	s.restfulCont.Add(ws)
 
+	s.addMetricsBucketMatcher("containerLogPaths")
+	ws = new(restful.WebService)
+	ws.
+		Path("/containerLogPaths").
+		Produces(restful.MIME_JSON)
+	ws.Route(ws.GET("/{podNamespace}/{podID}").
+		To(s.getContainerLogPaths).
+		Operation("getContainerLogPaths"))
+	s.restfulCont.Add(ws)
+
 	s.addMetricsBucketMatcher("configz")
 	configz.InstallHandler(s.restfulCont)
 
@@ -590,11 +601,12 @@ func (s *Server) InstallDebuggingDisabledHandlers() {
 	s.addMetricsBucketMatcher("attach")
 	s.addMetricsBucketMatcher("portForward")
 	s.addMetricsBucketMatcher("containerLogs")
+	s.addMetricsBucketMatcher("containerLogPaths")
 	s.addMetricsBucketMatcher("runningpods")
 	s.addMetricsBucketMatcher("pprof")
 	s.addMetricsBucketMatcher("logs")
 	paths := []string{
-		"/run/", "/exec/", "/attach/", "/portForward/", "/containerLogs/",
+		"/run/", "/exec/", "/attach/", "/portForward/", "/containerLogs/", "/containerLogPaths/",
 		runningPodsPath, pprofBasePath, logsPath}
 	for _, p := range paths {
 		s.restfulCont.Handle(p, h)

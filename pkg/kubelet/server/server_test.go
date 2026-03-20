@@ -129,6 +129,24 @@ func (fk *fakeKubelet) GetKubeletContainerLogs(ctx context.Context, podFullName,
 	return fk.containerLogsFunc(ctx, podFullName, containerName, logOptions, stdout, stderr)
 }
 
+func (fk *fakeKubelet) GetContainerLogPaths(_ context.Context, podNamespace, podName string) (map[string]string, error) {
+	pod, ok := fk.podByNameFunc(podNamespace, podName)
+	if !ok {
+		return nil, fmt.Errorf("pod %q not found", podName)
+	}
+	result := make(map[string]string)
+	for _, c := range pod.Spec.InitContainers {
+		result[c.Name] = fmt.Sprintf("/var/log/pods/%s_%s_%s/%s", podNamespace, podName, pod.UID, c.Name)
+	}
+	for _, c := range pod.Spec.Containers {
+		result[c.Name] = fmt.Sprintf("/var/log/pods/%s_%s_%s/%s", podNamespace, podName, pod.UID, c.Name)
+	}
+	for _, c := range pod.Spec.EphemeralContainers {
+		result[c.Name] = fmt.Sprintf("/var/log/pods/%s_%s_%s/%s", podNamespace, podName, pod.UID, c.Name)
+	}
+	return result, nil
+}
+
 func (fk *fakeKubelet) GetHostname() string {
 	return fk.hostnameFunc()
 }
