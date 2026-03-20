@@ -57,7 +57,6 @@ import (
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/envvars"
 	"k8s.io/kubernetes/pkg/kubelet/images"
-	"k8s.io/kubernetes/pkg/kubelet/kuberuntime"
 	"k8s.io/kubernetes/pkg/kubelet/metrics"
 	"k8s.io/kubernetes/pkg/kubelet/status"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
@@ -1575,41 +1574,6 @@ func (kl *Kubelet) GetKubeletContainerLogs(ctx context.Context, podFullName, con
 	}
 
 	return kl.containerRuntime.GetContainerLogs(ctx, pod, containerID, logOptions, stdout, stderr)
-}
-
-// GetContainerLogPaths returns a map of container names to their log directory
-// paths for all containers (init, regular, and ephemeral) in the given pod.
-func (kl *Kubelet) GetContainerLogPaths(_ context.Context, podNamespace, podName string) (map[string]string, error) {
-	pod, ok := kl.GetPodByName(podNamespace, podName)
-	if !ok {
-		return nil, fmt.Errorf("pod %q in namespace %q not found", podName, podNamespace)
-	}
-
-	var podUID types.UID
-	pod, mirrorPod, wasMirror := kl.podManager.GetPodAndMirrorPod(pod)
-	if wasMirror {
-		if pod == nil {
-			return nil, fmt.Errorf("mirror pod %q does not have a corresponding pod", podName)
-		}
-		podUID = mirrorPod.UID
-	} else {
-		podUID = pod.UID
-	}
-
-	result := make(map[string]string)
-	podLogsDir := kl.getPodLogsDir()
-
-	for _, c := range pod.Spec.InitContainers {
-		result[c.Name] = kuberuntime.BuildContainerLogsDirectory(podLogsDir, podNamespace, podName, podUID, c.Name)
-	}
-	for _, c := range pod.Spec.Containers {
-		result[c.Name] = kuberuntime.BuildContainerLogsDirectory(podLogsDir, podNamespace, podName, podUID, c.Name)
-	}
-	for _, c := range pod.Spec.EphemeralContainers {
-		result[c.Name] = kuberuntime.BuildContainerLogsDirectory(podLogsDir, podNamespace, podName, podUID, c.Name)
-	}
-
-	return result, nil
 }
 
 // getPhase returns the phase of a pod given its container info.
