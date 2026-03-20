@@ -19,7 +19,6 @@ package server
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -802,41 +801,6 @@ func (s *Server) getContainerLogs(request *restful.Request, response *restful.Re
 		response.WriteError(http.StatusBadRequest, err)
 		return
 	}
-}
-
-// getContainerLogPaths returns the log directory paths for all containers in the specified pod.
-func (s *Server) getContainerLogPaths(request *restful.Request, response *restful.Response) {
-	podNamespace := request.PathParameter("podNamespace")
-	podID := request.PathParameter("podID")
-	ctx := request.Request.Context()
-
-	if len(podID) == 0 {
-		response.WriteError(http.StatusBadRequest, fmt.Errorf(`{"message": "Missing podID."}`))
-		return
-	}
-	if len(podNamespace) == 0 {
-		response.WriteError(http.StatusBadRequest, fmt.Errorf(`{"message": "Missing podNamespace."}`))
-		return
-	}
-
-	pod, ok := s.host.GetPodByName(podNamespace, podID)
-	if !ok {
-		response.WriteError(http.StatusNotFound, fmt.Errorf("pod %q does not exist", podID))
-		return
-	}
-
-	logPaths, err := s.host.GetContainerLogPaths(ctx, pod.Namespace, pod.Name)
-	if err != nil {
-		response.WriteError(http.StatusInternalServerError, err)
-		return
-	}
-
-	data, err := json.Marshal(logPaths)
-	if err != nil {
-		response.WriteError(http.StatusInternalServerError, err)
-		return
-	}
-	writeJSONResponse(response, data)
 }
 
 // encodePods creates an v1.PodList object from pods and returns the encoded
